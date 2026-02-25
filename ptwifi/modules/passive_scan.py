@@ -1,0 +1,130 @@
+from helpers.classes import *
+from helpers.helper_functions import *
+import shutil, subprocess, os
+import pandas as pd
+import time
+
+def run(interface: str, channel: str, sta_filter, hidden_filter, json_name: str):
+    if not subprocess.check_output(["rm", "-rf", "output/tmp"]) and subprocess.check_output(["mkdir","output/tmp"]):
+        exit(1)
+
+    try:
+        if channel is not None:
+            airodump_process = subprocess.Popen(
+                ["airodump-ng", interface, "-w", "output/tmp/tmp", "--output-format", "csv", "--write-interval", "1", "-c", channel],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.STDOUT,
+            )
+        else:
+            airodump_process = subprocess.Popen(
+                ["airodump-ng", interface, "-w", "output/tmp/tmp", "--output-format", "csv", "--write-interval", "1"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.STDOUT,
+            )
+
+
+        ap_list = []
+        station_list = []
+        while True:
+            try:
+                if os.path.exists("output/tmp/tmp-01.csv"):
+                    print("\033[H\033[J", end="")
+                    shutil.copy("output/tmp/tmp-01.csv", "output/tmp/tmpRead.csv")
+                    raw_data = pd.read_csv("output/tmp/tmpRead.csv", on_bad_lines='skip', encoding='utf-8')
+                    raw_data_divisor_index = raw_data[raw_data["BSSID"] == "Station MAC"].index[0]
+
+                    raw_ap_data = raw_data.iloc[:raw_data_divisor_index]
+
+                    raw_station_data_header = raw_data.iloc[raw_data_divisor_index]
+                    raw_station_data = raw_data.iloc[raw_data[raw_data["BSSID"] == "Station MAC"].index[0] + 1:]
+                    raw_station_data.columns = raw_station_data_header
+                    raw_station_data = raw_station_data.iloc[:, :7]
+
+
+                    for idx, row in raw_ap_data.iterrows():
+                        if not any(ap.bssid == row["BSSID"] for ap in ap_list):
+                            ap_list.append(
+                                AP(row[" ESSID"], row["BSSID"], row[" Power"], row[" # beacons"], row[" # IV"],
+                                   row[" channel"], row[" Privacy"], row[" Cipher"], row[" Authentication"]))
+                        else:
+                            index = find_index_by_bssid(ap_list, row["BSSID"])
+                            ap = ap_list[index]
+
+                            ap.essid = row[" ESSID"][1:] if row[" ESSID"] != " " else "Hidden"
+                            ap.signal_strength = int(row[" Power"])
+                            ap.beacon_frames_num = int(row[" # beacons"])
+                            ap.data_frames_num = int(row[" # IV"])
+
+                            channel = int(str(row[" channel"]))
+                            if channel not in ap.channels:
+                                ap.channels.append(channel)
+
+                            ap.encryption_mode = row[" Privacy"][1:].split(" ",1)[0]
+                            ap.cipher = row[" Cipher"][1:]
+                            ap.auth_method = row[" Authentication"][1:]
+                            ap.distance = get_approx_dist(ap.signal_strength, ap.channels[0])
+
+                    for idx, row in raw_station_data.iterrows():
+
+                        if not any(station.mac == row["Station MAC"] for station in station_list):
+                            station_list.append(Station(row["Station MAC"], row[" BSSID"], row[" Probed ESSIDs"], row[" # packets"]))
+                        else:
+                            index = find_station_index_by_mac(station_list, row["Station MAC"])
+                            station_list[index].set_data_frames_num(row[" # packets"])
+                            station_list[index].add_probed_essid(row[" Probed ESSIDs"])
+                            station_list[index].set_connected_bssid(row[" BSSID"])
+                    ap_list.sort(key=lambda ap: ap.essid)
+
+                    helper.print_ap_header()
+                    for ap in ap_list:
+                        if str(ap.essid) != "Hidden":
+                            ap.print_realtime()
+
+                    if hidden_filter:
+                        print("\n")
+                        for ap in ap_list:
+                            if str(ap.essid) == "Hidden":
+                                ap.print_realtime()
+
+                    if sta_filter:
+                        print("\n")
+                        print("\n")
+                        helper.print_station_header()
+                        for station in station_list[-10:]:
+                            station.print_realtime()
+
+                    time.sleep(0.5)
+
+            except pd.errors.EmptyDataError:
+                time.sleep(0.5)
+                continue
+            except KeyboardInterrupt:
+                subprocess.check_output(["rm", "-rf", "output/tmp"]) and subprocess.check_output(["mkdir", "output/tmp"])
+
+                if json_name is not None:
+                    for ap in ap_list:
+                        for station in station_list:
+                            if ap.bssid == station.connected_bssid:
+                                ap.associated_STAs.append(station.mac)
+
+                        append_json(f"output/passive_scan-{json_name}.json",
+                                    {
+                                        'ESSID': ap.essid,
+                                        'BSSID': ap.bssid,
+                                        'Channel': format_array(ap.channels),
+                                        'Signal strength': ap.signal_strength,
+                                        'Encryption': ap.encryption_mode,
+                                        'Cipher': ap.cipher,
+                                        'Authentication': ap.auth_method,
+                                        'Beacons': ap.beacon_frames_num,
+                                        'Data Frams': ap.data_frames_num,
+                                        'Vendor': ap.vendor,
+                                        'Associated STAs': format_array(ap.associated_STAs),
+                                        'Approx. distance [m]': ap.distance,
+                                    }
+                                    )
+                airodump_process.terminate()
+                print("\n\n")
+                break
+    except subprocess.CalledProcessError as e:
+        print(f"Error: {e}")

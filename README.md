@@ -1,7 +1,7 @@
 # ptwifi
 
 ## Overview
-<hr>
+ 
 ptwifi is a command-line tool for analyzing wireless IEEE 802.11 networks with a primary focus on detecting and analyzing wireless Access Points. 
 
 ptwifi combines Python-based processing with external wireless auditing tools to collect and analyze information about Access Points in real time. 
@@ -18,7 +18,7 @@ The main objectives of the tool are:
 
 The tool is designed primarily for educational and research purposes in wireless networking and wireless network security analysis.
 ## Features
-<hr>
+ 
 
 - Passive scanning of WiFi Access Points using `airodump-ng`.
 - Active scanning of wireless networks using IEEE 802.11 probe requests.
@@ -32,7 +32,7 @@ The tool is designed primarily for educational and research purposes in wireless
 - Modular architecture allowing easy extension with additional wireless testing modules.
 
 ## Architecture
-<hr>
+ 
 
 ### Environment
 
@@ -92,7 +92,7 @@ Implements a deauthentication testing module.
 Constructs IEEE 802.11 deauthentication frames and transmits them toward a specified Access Point or client station.
 
 ### External Tools
-<hr>
+
 
 The tool integrates several external wireless auditing utilities used for capturing and analyzing WiFi traffic.
 
@@ -109,7 +109,7 @@ The tool integrates several external wireless auditing utilities used for captur
 - numpy==2.3.4
 
 ## Usage
-<hr>
+ 
 
 ### Listing Wireless Interfaces
 `sudo python3 main.py show ifaces`
@@ -122,14 +122,14 @@ The tool integrates several external wireless auditing utilities used for captur
     
 
 ## Limitations
-<hr>
+
 
 - The tool currently operates primarily on the 2.4 GHz band.
 - The number of implemented testing modules is currently relatively small, focusing mainly on scanning and basic deauthentication testing.
 - The tool primarily collects and presents data, but the interpretation and evaluation of results are left to the tester.
 
 ## Future Improvements
-<hr>
+
 
 - Implementation of automated test result evaluation to assist testers in interpreting collected data.
 - Support for 5 GHz WiFi networks.

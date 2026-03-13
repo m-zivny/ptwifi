@@ -1,6 +1,53 @@
 """
-PTWIFI - complex Python programme to analyze wireless Access Points
-author: Martin Živný
+main.py
+Author: Martin Živný
+
+Description
+-----------
+This script serves as the main entry point of the "ptwifi" tool. It handles
+command-line argument parsing, validates runtime conditions, prepares the
+wireless interface for operation, and executes the selected analysis module.
+
+The script ensures that the selected wireless interface supports monitor mode,
+switches the interface into monitor mode if necessary, optionally sets the
+requested WiFi channel, and executes the right module.
+
+Responsibilities
+---------------
+- Parse and validate command-line arguments
+- Verify privileges for running dependent tools
+- Check availability  of the specified wireless interface
+- Enable monitor mode on the interface
+- Set the working WiFi channel if specified
+- Execute the selected tool mode (passive scan, active scan, or deauthentication)
+- Restore the wireless interface back to managed mode after execution
+
+Supported Modes
+---------------
+* passive   - Launches passive WiFi scanning implemented in modules.passive_scan.
+* active    - Launches active WiFi scanning implemented in modules.active_scan.
+* deauth    - Launches a deauthentication test implemented in modules.deauth_attack.
+
+Inputs
+------
+
+mandatory arguments
+
+* interface - Name of the wireless interface to be used.
+* mode      - Operational mode of the tool (passive | active | deauth).
+
+optional arguments
+
+* channel (-c)          - Specifies the Wi-Fi channel(s) to operate on.
+* BSSID (-b)            - BSSID (MAC address) of the target Access Point.
+* MAC (-a)              - MAC address of the target client station.
+* time_period (-t)      - Interval in milliseconds between deauthentication packets.
+* number (-n)           - Total number of deauthentication packets to send (-1 means indefinitely).
+* burst_number (-bn)    - Number of deauthentication packets sent in a single burst.
+* sta_off               - Disables displaying detected client stations during passive scanning.
+* hidden_off            - Disables displaying Access Points with hidden SSIDs during passive scanning.
+* json                  - Name of the JSON file where scan results will be saved.
+
 """
 
 import argparse
@@ -15,9 +62,7 @@ known_pt_modes = [_mode for _mode in dir(PTModes) if not _mode.startswith("__")]
 
 if __name__ == '__main__':
 
-    """
-    Parsing user defined arguments
-    """
+    # Prepare parser for user-defined arguments. Describe every argument by help parameter.
     parser = argparse.ArgumentParser()
     parser.add_argument('interface', type=str, help='Name of the wireless interface to be used may support atleast monitor mode.')
     parser.add_argument('mode', type=str, help='Tool mode to be executed. Possible values: passive|active|deauth')
@@ -31,12 +76,14 @@ if __name__ == '__main__':
     parser.add_argument('--hidden_off', action="store_false", help="Turn off showing APs with hidden SSID.")
     parser.add_argument('--json', type=str, help="Name of the json file to output.")
 
+    # Parse user defined arguments
     args = parser.parse_args()
     _interface = args.interface
     _mode = args.mode.lower()
 
     _channel = args.channel
     if _channel is not None:
+        # Check if optional channel argument has been used. If so, make possible to define more channels at once, separated by comma.
         _channel = _channel.split(',')
 
     _bssid = args.BSSID
@@ -48,20 +95,20 @@ if __name__ == '__main__':
     _hidden_filter = args.hidden_off
     _json_name = args.json
 
+    # Show stations by default unless explicitly disabled.
     if _sta_filter is None:
         _sta_filter = True
 
+    # Show hidden SSIDs by default unless explicitly disabled.
     if _hidden_filter is None:
         _hidden_filter = True
 
-    """
-    Check for (un)wanted cases
-    """
-
+    # Validate use of sudo privileges, if not, end run.
     if not helper.is_sudo():
         print("Script needs to be run with sudo privileges.")
         exit(1)
 
+    # Special mode for listing detected wireless interfaces and vendors.
     if _interface == "show" and args.mode == "ifaces":
        print(f"{Sc.bold}Name\t \tVendor{Sc.reset}")
        wireless_interfaces = [[x[0]] for x in setup.get_wireless_interfaces() if x[1] == "wifi"]
@@ -70,29 +117,27 @@ if __name__ == '__main__':
            print(interface[0] + "\t \t"+ interface[1])
        exit(0)
 
+    # Ensure that defined interface exists.
     if not setup.wireless_interface_exists(_interface):
        print(f"Interface {_interface} not found.")
        exit(1)
+
+    # Ensure that defined interface supports monitor mode.
     if not setup.interface_supports_monitor(_interface):
        print(f"Interface {_interface} does not support monitor mode.")
        exit(1)
 
-    """
-    Monitor mode setup
-    """
+    # Enable monitor mode on defined interface.
     phy_index = setup.get_phy_index(_interface)
-
-
     if not setup.interface_in_mode(_interface, InterfaceModes.monitor):
         setup.set_monitor(_interface, phy_index)
     _interface = f"{_interface}mon"
 
+    # Set interface channel to first parsed channel if a channel list is provided.
     if _channel is not None:
         setup.set_channel(_interface, _channel[0])
 
-    """
-    Tool execution
-    """
+    # Try to execute the requested module after the interface has been prepared.
     try:
         match _mode:
             case "passive":
@@ -112,11 +157,9 @@ if __name__ == '__main__':
 
     except Exception as e:
         print(e)
+        # Restore the interface to managed mode if module run ends in exception.
         setup.set_managed(_interface, phy_index)
         exit(0)
 
-
-    """
-    End of script - setting interface to managed mode
-    """
+    # Restore the interface to managed mode before the script exits normally.
     setup.set_managed(_interface, phy_index)

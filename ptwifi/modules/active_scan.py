@@ -1,3 +1,25 @@
+"""
+modules/active_scan.py
+Author: Martin Živný
+
+Description
+-----------
+This module implements active Wi-Fi scanning in the PTWiFi tool.
+
+It builds IEEE 802.11 probe request frames, transmits them on selected
+channels, listens for probe response frames, and collects information
+about nearby Access Points that actively respond to scanning requests.
+
+Responsibilities
+----------------
+- Build probe request frames for active scanning
+- Transmit probe requests on selected Wi-Fi channels
+- Capture probe response frames from nearby Access Points
+- Collect and update detected Access Point information
+- Display active scan results in real time
+- Export detected Access Points to JSON format
+"""
+
 from scapy.layers.dot11 import *
 from scapy.volatile import RandMAC
 from helpers import interface_setup as setup
@@ -5,6 +27,10 @@ from helpers.helper_functions import *
 import time
 
 def build_probe():
+    # Construct a broadcast probe request frame used for active scanning.
+    # addr1 = Reciever Address
+    # addr2 = Transmitter address
+    # addr3 = AP BSSID
     return (
         RadioTap() /
         Dot11(type=0, subtype=4,
@@ -18,6 +44,15 @@ def build_probe():
 
 
 def run(interface: str, channels: list, json_name: str):
+    # Active scanning procedure:
+    # 1. Iterate through selected Wi-Fi channels.
+    # 2. Send a broadcast probe request frame.
+    # 3. Listen for probe response frames from Access Points.
+    # 4. Extract SSID and BSSID from responses.
+    # 5. Maintain a list of discovered APs and their channels.
+    # 6. Continuously print detected networks in real time.
+    # 7. On interruption, optionally export results to JSON.
+
     if channels is None:
         channels = [x for x in range(1,14)]
     found_aps = []

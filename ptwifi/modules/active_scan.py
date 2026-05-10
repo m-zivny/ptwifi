@@ -4,107 +4,194 @@ Author: Martin Živný
 
 Description
 -----------
-This module implements active Wi-Fi scanning in the PTWiFi tool.
+This module implements active Wi-Fi scanning and analysis in the PTWiFi tool.
 
-It builds IEEE 802.11 probe request frames, transmits them on selected
-channels, listens for probe response frames, and collects information
-about nearby Access Points that actively respond to scanning requests.
+It utilizes the Scapy library to craft and inject specific 802.11 management 
+frames, such as Authentication and Association Requests. By analyzing the 
+responses from Access Points, it identifies device capabilities, verifies 
+security configurations, and collects data for role detection.
 
 Responsibilities
 ----------------
-- Build probe request frames for active scanning
-- Transmit probe requests on selected Wi-Fi channels
-- Capture probe response frames from nearby Access Points
-- Collect and update detected Access Point information
-- Display active scan results in real time
-- Export detected Access Points to JSON format
+- Craft and send 802.11 Authentication frames
+- Craft and send 802.11 Association Request frames
+- Capture and parse 802.11 response frames (Auth/Assoc Response)
+- Analyze response status codes and capability information elements
+- Support the Decision Engine in identifying Bridge and ClientBridge roles
+
+External Tools
+--------------
+* Scapy - Used for frame generation, injection, and sniffing
 """
 
-from scapy.layers.dot11 import *
-from scapy.volatile import RandMAC
-from helpers import interface_setup as setup
-from helpers.helper_functions import *
 import time
+from scapy.volatile import RandMAC
+from scapy.all import (
+    RadioTap, 
+    Dot11, 
+    Dot11Auth, 
+    Dot11AssoReq, 
+    Dot11AssoResp,
+    Dot11Elt, 
+    srp1,     
+    wrpcap,   
+    conf
+)
+from helpers.classes import *
+from helpers.helper_functions import *
+from datetime import datetime
 
-def build_probe():
-    # Construct a broadcast probe request frame used for active scanning.
-    # addr1 = Reciever Address
-    # addr2 = Transmitter address
-    # addr3 = AP BSSID
-    return (
-        RadioTap() /
-        Dot11(type=0, subtype=4,
-              addr1="ff:ff:ff:ff:ff:ff",
-              addr2=RandMAC(),
-              addr3="ff:ff:ff:ff:ff:ff") /
-        Dot11Elt(ID="SSID", info=b"") /
-        Dot11Elt(ID="Rates", info=b"\x82\x84\x8b\x96\x0c\x12\x18\x24") /
-        Dot11Elt(ID="ESRates", info=b"\x30\x48\x60\x6c")
-    )
-
-
-def run(interface: str, channels: list, json_name: str):
-    # Active scanning procedure:
-    # 1. Iterate through selected Wi-Fi channels.
-    # 2. Send a broadcast probe request frame.
-    # 3. Listen for probe response frames from Access Points.
-    # 4. Extract SSID and BSSID from responses.
-    # 5. Maintain a list of discovered APs and their channels.
-    # 6. Continuously print detected networks in real time.
-    # 7. On interruption, optionally export results to JSON.
-
-    if channels is None:
-        channels = [x for x in range(1,14)]
-    found_aps = []
-    probe = build_probe()
+def analyze_capabilities(cap_value) -> dict:
+    """
+    Analyzes the 16-bit Capability Information field using bitmasks.
+    Fixes endianness (converts Scapy Big-Endian interpretation back to 802.11 Little-Endian).
+    """
     try:
-        while True:
-            for ch in channels:
-                setup.set_channel(interface, ch)
-                sendp(probe, iface=interface, verbose=False)
-                responses = sniff(
-                    iface=interface,
-                    timeout=0.30,
-                    lfilter=lambda p: p.haslayer(Dot11ProbeResp)
-                )
+        cap_int = int(cap_value)
+        # Byte-swap: swapping the lower and upper bytes
+        cap_swapped = ((cap_int & 0xFF) << 8) | ((cap_int >> 8) & 0xFF)
+    except (ValueError, TypeError):
+        return {}
 
-                for p in responses:
-                    bssid = p.addr2
-                    ssid = p[Dot11Elt].info.decode(errors="ignore")
+    return {
+        "ESS (Access Point)": bool(cap_swapped & 0x0001),
+        "IBSS (Ad-Hoc)": bool(cap_swapped & 0x0002),
+        "Privacy (Encryption)": bool(cap_swapped & 0x0010),
+        "Short Preamble": bool(cap_swapped & 0x0020),
+        "Spectrum Management": bool(cap_swapped & 0x0100),
+        "Short Slot Time": bool(cap_swapped & 0x0400),
+        "Radio Measurement": bool(cap_swapped & 0x1000)
+    }
 
-                    if ssid == "":
-                        continue
+def print_capabilities(capabilities: dict) -> None:
+    """
+    Formatted output of captured capabilities to the terminal.
+    """
+    print(f"\n{Style.BOLD}[+] Extracted Capability Information:{Style.RESET}")
+    for feature, is_supported in capabilities.items():
+        status = "\033[32m[YES]\033[0m" if is_supported else "\033[31m[NO]\033[0m"
+        print(f"    {feature:<25} {status}")
 
-                    existing = next((ap for ap in found_aps if ap["BSSID"] == bssid), None)
+def create_auth_frame(target_bssid: str, client_mac: str):
+    """
+    Constructs an 802.11 Authentication frame (Open System).
+    """
+    dot11 = Dot11(
+        type=0, 
+        subtype=11, 
+        addr1=target_bssid, 
+        addr2=client_mac, 
+        addr3=target_bssid
+    )
+    auth = Dot11Auth(algo=0, seqnum=1, status=0)
+    return RadioTap() / dot11 / auth
 
-                    if existing:
-                        if ch not in existing["Channels"]:
-                            existing["Channels"].append(ch)
-                    else:
-                        found_aps.append({
-                            "SSID": ssid,
-                            "BSSID": bssid,
-                            "Channels": [ch],
-                        })
+def create_assoc_req_frame(target_bssid: str, client_mac: str, essid: str):
+    """
+    Constructs an 802.11 Association Request frame (includes HT, without RSN).
+    """
+    dot11 = Dot11(
+        type=0, 
+        subtype=0, 
+        addr1=target_bssid, 
+        addr2=client_mac, 
+        addr3=target_bssid
+    )
+    assoc_req = Dot11AssoReq(cap=0x0421, listen_interval=0x00c8)
+    
+    essid_ie = Dot11Elt(ID=0, info=essid)
+    rates_ie = Dot11Elt(ID=1, info=b'\x82\x84\x8b\x96')
+    ext_rates_ie = Dot11Elt(ID=50, info=b'\x0c\x12\x18\x24\x30\x48\x60\x6c')
+    ht_cap_ie = Dot11Elt(ID=45, info=b'\xef\x01\x17\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00')
+    
+    return RadioTap() / dot11 / assoc_req / essid_ie / rates_ie / ext_rates_ie / ht_cap_ie
 
-                print("\033[H\033[J", end="")
-                print("SSID" + " " * 31 + "BSSID\t\t\t Channels")
+def run(interface: str, target_ap: AP) -> None:
+    """
+    Central function for active scanning of the target AP with retransmission.
+    """
+    timestamp = datetime.now().strftime("[%Y-%m-%d_%H-%M]")
+    export_path = f"output/active_scan/{timestamp}_{target_ap.bssid.replace(':', '')}.pcap"
 
-                for ap in found_aps:
-                    _formatted_ap_ssid = ap["SSID"] + " " * (35-len(ap["SSID"])-1)
-                    print(f"{_formatted_ap_ssid} {ap['BSSID']} \t\t {ap['Channels']}")
+    print(f"\n{Style.BOLD}--- ACTIVE AP TEST ---{Style.RESET}")
+    print(f"Target: {target_ap.essid} ({target_ap.bssid})")
+    print(f"Channel: {target_ap.channels[0] if target_ap.channels else 'Unknown'}")
+     
+    MAX_RETRIES = 5
 
-                time.sleep(0.3)
+    captured_packets = []
+    auth_resp = None
+    
+    # Phase 1: Authentication
+    client_mac = str(RandMAC())
+    for attempt in range(1, MAX_RETRIES + 1):
+        auth_req = create_auth_frame(target_ap.bssid, client_mac)
+        captured_packets.append(auth_req)
 
-    except KeyboardInterrupt:
-        if json_name is not None:
-            for ap in found_aps:
-                append_json(f"output/active_scan-{json_name}.json",
-                            {
-                                'ESSID': ap["SSID"],
-                                'BSSID': ap["BSSID"],
-                                'Channel': format_array(ap["Channels"]),
-                            }
-                            )
-        print("\n Ending...")
+        print(f"\r[*] Testing Authentication (Attempt {attempt}/{MAX_RETRIES})...", end="", flush=True)
+
+        auth_resp = srp1(auth_req, iface=interface, timeout=2, verbose=False)
+
+        if auth_resp and auth_resp.haslayer(Dot11Auth):
+            print() 
+            break
+
+    if not auth_resp or not auth_resp.haslayer(Dot11Auth):
+        print("\n[-] AP did not respond to Authentication Request.")
+        target_ap.test_results['auth_status'] = "Timeout"
+        wrpcap(export_path, captured_packets)
+        time.sleep(2)
         return
+
+    captured_packets.append(auth_resp)
+    auth_status = auth_resp[Dot11Auth].status
+    print(f"[+] Auth Response Status: {auth_status}")
+    target_ap.test_results['auth_status'] = auth_status 
+
+    if auth_status != 0:
+        print("[-] Authentication failed. Aborting.")
+        wrpcap(export_path, captured_packets)
+        time.sleep(2)
+        return
+
+    # Phase 2: Association
+    assoc_resp = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        assoc_req = create_assoc_req_frame(target_ap.bssid, client_mac, target_ap.essid)
+        captured_packets.append(assoc_req)
+
+        print(f"\r[*] Testing Association (Attempt {attempt}/{MAX_RETRIES})...", end="", flush=True)
+        
+        assoc_resp = srp1(assoc_req, iface=interface, timeout=2, verbose=False)
+        
+        if assoc_resp and assoc_resp.haslayer(Dot11AssoResp):
+            print() 
+            break
+
+    if not assoc_resp or not assoc_resp.haslayer(Dot11AssoResp):
+        print("\n[-] AP did not respond to Association Request.")
+        target_ap.test_results['assoc_status'] = "Timeout"
+        wrpcap(export_path, captured_packets)
+        time.sleep(2)
+        return
+
+    captured_packets.append(assoc_resp)
+    assoc_status = assoc_resp[Dot11AssoResp].status
+    print(f"[+] Association Response Status: {assoc_status}")
+    target_ap.test_results['assoc_status'] = assoc_status
+
+    # Phase 3: Capability analysis
+    raw_cap_int = assoc_resp[Dot11AssoResp].cap
+    parsed_caps = analyze_capabilities(raw_cap_int)
+    
+    if parsed_caps:
+        print("[+] Capabilities successfully extracted.")
+    else:
+        print("[-] Failed to extract capabilities.")
+    
+    target_ap.test_results['capabilities'] = parsed_caps
+
+    wrpcap(export_path, captured_packets)
+    print(f"\n[*] Session saved to: {export_path}")
+    
+    time.sleep(2)

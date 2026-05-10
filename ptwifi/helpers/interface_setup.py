@@ -139,9 +139,9 @@ def set_managed(interface_name: str, phy_index: str) -> bool:
     subprocess.check_output(["systemctl", "start", f"wpa_supplicant@{interface_name}"])
     subprocess.check_output(["nmcli", "device", "set", interface_name, "managed", "yes"])
 
-    if interface_in_mode(interface_name, InterfaceModes.managed):
+    if interface_in_mode(interface_name, InterfaceModes.MANAGED):
         print(
-            f"Interface {Style.bold}{interface_name}{Style.reset} has been set to {Style.bold}{InterfaceModes.managed}{Style.reset} mode."
+            f"Interface {Style.BOLD}{interface_name}{Style.RESET} has been set to {Style.BOLD}{InterfaceModes.MANAGED}{Style.RESET} mode."
         )
         return True
     return False
@@ -156,9 +156,9 @@ def set_monitor(interface_name: str, phy_index: str)-> bool:
     interface_name = f"{interface_name}mon"
     subprocess.check_call(["ip", "link", "set", interface_name, "up"])
 
-    if interface_in_mode(interface_name, InterfaceModes.monitor):
+    if interface_in_mode(interface_name, InterfaceModes.MONITOR):
         print(
-            f"Interface {Style.bold}{interface_name}{Style.reset} has been set to {Style.bold}{InterfaceModes.monitor}{Style.reset} mode."
+            f"Interface {Style.BOLD}{interface_name}{Style.RESET} has been set to {Style.BOLD}{InterfaceModes.MONITOR}{Style.RESET} mode."
         )
         return True
     return False

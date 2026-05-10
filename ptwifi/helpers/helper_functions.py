@@ -72,21 +72,21 @@ def format_color_strength(strength: int) -> str:
         return "?"
 
     if strength >= -30:
-        end_format = sc.excellent
+        end_format = sc.EXCELLENT
     elif strength >= -50:
-        end_format  = sc.great
+        end_format  = sc.GREAT
     elif strength >= -60:
-        end_format = sc.very_good
+        end_format = sc.VERY_GOOD
     elif strength >= -67:
-        end_format = sc.good
+        end_format = sc.GOOD
     elif strength >= -70:
-        end_format = sc.reliable
+        end_format = sc.RELIABLE
     elif strength >= -80:
-        end_format = sc.unreliable
+        end_format = sc.UNRELIABLE
     else:
-        end_format = sc.poor
+        end_format = sc.POOR
 
-    return sc.bold + end_format[0] + end_format[1] +" (" + str(strength) + ")" + sc.reset
+    return sc.BOLD + end_format[0] + end_format[1] +" (" + str(strength) + ")" + sc.RESET
 
 
 def is_sudo() -> bool:
@@ -113,64 +113,54 @@ def find_vendor(bssid: str) -> str:
 
 def format_array(raw_list : list) -> str:
     # Convert a list of values into a comma-separated string.
-    _formatted = ""
+    formatted_string_array = ""
     for item in raw_list:
         if raw_list.index(item) != raw_list.index(raw_list[-1]):
-            _formatted += str(item) + ","
+            formatted_string_array += str(item) + ","
         else:
-            _formatted += str(item)
-    return _formatted
+            formatted_string_array += str(item)
+    return formatted_string_array
 
-def get_approx_dist(power: float, channel: int) -> float:
-    # Estimate approximate distance from RSSI and channel frequency using FSPL.
-    #!!!! FSPL is not a great way to approximate distance, needs to be changed
-    _att_constant = -27.56
-    _approx_ap_power = 20
 
-    if channel in range(1, 12):
-        _freq = 2412 + 5*(channel-1)
+def calculate_approx_distance(rssi: float, channel: int) -> float:
+    # Estimate approximate distance from RSSI and channel frequency using the Log-Distance Path Loss model.
+    DEFAULT_AP_POWER = 20.0
+    PATH_LOSS_EXPONENT = 4.0 
+
+    if channel in range(1, 14):
+        frequency = 2412 + 5 * (channel - 1)
     elif channel in range(36, 65):
-        _freq = 5180 + 20 * (channel-36) / 4
+        frequency = 5180 + 5 * (channel - 36)
     elif channel in range(100, 141):
-        _freq = 5500 + 20 * (channel - 100) / 4
+        frequency = 5500 + 5 * (channel - 100)
     else:
-        return 0
+        return 0.0
 
-    _FSPL = _approx_ap_power - power
-    return round(np.power(10, (_FSPL - 20 * np.log10(_freq) - _att_constant)/20), 2)
+    l_1m = 20 * np.log10(frequency) - 27.55
+    exponent = (DEFAULT_AP_POWER - rssi - l_1m) / (10 * PATH_LOSS_EXPONENT)
+    distance = np.power(10, exponent)
+    
+    return round(distance, 2)
 
-def strip_whitespaces(_list: str) -> list:
-    # Split a string and remove empty items created by repeated spaces.
-    _list = _list.split(" ")
-    _filtered_data = []
 
-    for data in _list:
-        if data != '':
-            _filtered_data.append(data)
+def strip_whitespaces(input_string: str) -> list:
+    # Automatically handles multiple spaces and leading/trailing whitespace
+    return input_string.strip().split()
 
-    return _filtered_data
+def merge_list_to_string(string_list: list) -> str:
+    return " ".join(string_list)
 
-def merge_list_to_string(_list :list) -> str:
-    # Merge a list of strings into a single space-separated string.
-    _formatted_string = ""
-    for data in _list:
-        if _list.index(data) != len(_list)-1:
-            _formatted_string += data + " "
-        else:
-            _formatted_string += data
-    return _formatted_string
-
-def append_json(file, new_object):
+def append_json(filename, new_object):
     # Append a new object to a JSON array stored in a file.
     # Create the JSON file with an empty array if it does not exist yet.
-    if not os.path.exists(file):
-        with open(file, "w", encoding="utf-8") as f:
+    if not os.path.exists(filename):
+        with open(filename, "w", encoding="utf-8") as f:
             json.dump([], f)
 
-    with open(file, "r", encoding="utf-8") as f:
+    with open(filename, "r", encoding="utf-8") as f:
         data = json.load(f)
 
     data.append(new_object)
 
-    with open(file, "w", encoding="utf-8") as f:
+    with open(filename, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)

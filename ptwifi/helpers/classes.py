@@ -20,167 +20,293 @@ Responsibilities
 
 import helpers.helper_functions as helper
 
+channels_2g = [1, 6, 11, 2, 7, 12, 3, 8, 13, 4, 9, 5, 10]
+channels_5g = [
+    36, 40, 44, 48,                                  
+    52, 56, 60, 64,                                  
+    100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144, 
+    149, 153, 157, 161, 165                          
+]
+
+PRINT_WIDTH = {
+    "essid": 30,
+    "bssid": 20,
+    "channel": 10,
+    "signal_strength": 23,
+    "encryption": 15,
+    "cipher": 20,
+    "auth": 10,
+    "beacons": 10,
+    "data_frames": 13,
+    "vendor": 35,
+    "distance": 10,
+    "station_mac": 20,
+    "connected_bssid": 20,
+    "sta_data_frames": 20,
+    "last_probed": 20
+}
+
 class InterfaceModes:
-    # Defines possible wireless interface operating modes.
-    monitor = "monitor"
-    managed = "managed"
+    """Defines possible wireless interface operating modes."""
+    MONITOR = "monitor"
+    MANAGED = "managed"
 
 class PTModes:
-    # Defines available PTWiFi tool modes.
-    active = "active"
-    passive = "passive"
-    deauth = "deauth"
+    """Defines available PTWiFi tool modes."""
+    ACTIVE = "active"
+    PASSIVE = "passive"
+    DEAUTH = "deauth"
 
 class Style:
-    # Defines terminal text formatting styles used in console output.
-    bold = "\033[1m"
-    italic = "\033[3m"
-    inverse = "\033[7m"
-    underline = "\033[4m"
-    reset = "\033[0m"
+    """Defines terminal text formatting styles used in console output."""
+    BOLD = "\033[1m"
+    ITALIC = "\033[3m"
+    INVERSE = "\033[7m"
+    UNDERLINE = "\033[4m"
+    RESET = "\033[0m"
 
 class StrengthColors:
-    # Defines color codes used for displaying signal strength in terminal output.
-    excellent = ["\033[38;5;46m", "Excellent"]
-    great = ["\033[38;5;40m", "Great"]
-    very_good = ["\033[38;5;190m", "Very good"]
-    good = ["\033[38;5;226m", "Good"]
-    reliable = ["\033[38;5;214m", "Reliable"]
-    unreliable = ["\033[38;5;202m", "Unreliable"]
-    poor = ["\033[38;5;196m", "Poor"]
-    reset = "\033[0m"
-    bold = "\033[1m"
-
+    """Defines color codes used for displaying signal strength in terminal output."""
+    EXCELLENT = ["\033[38;5;46m", "Excellent"]
+    GREAT = ["\033[38;5;40m", "Great"]
+    VERY_GOOD = ["\033[38;5;190m", "Very good"]
+    GOOD = ["\033[38;5;226m", "Good"]
+    RELIABLE = ["\033[38;5;214m", "Reliable"]
+    UNRELIABLE = ["\033[38;5;202m", "Unreliable"]
+    POOR = ["\033[38;5;196m", "Poor"]
+    BOLD = "\033[1m"
+    RESET = "\033[0m"
 
 
 class AP:
-    # Represents a detected wireless Access Point.
+    """
+    Represents a detected wireless Access Point.
 
-    def __init__(self, essid, bssid, signal_strength, beacon_frames_num, data_frames_num, channel, encryption_mode,
-                 cipher, auth_method) -> None:
-        # Hidden SSIDs are represented as "Hidden" in the internal structure and output.
-        if essid != " ":
-            self.essid = str(essid[1:])
-        else:
-            self.essid = "Hidden"
+    Attributes:
+        essid (str): The Extended Service Set Identifier (network name).
+        bssid (str): The Basic Service Set Identifier (MAC address).
+        channel (int): The operational channel.
+        encryption_mode (str): The primary encryption mode.
+        signal_strength (int): The RSSI value in dBm.
+        beacon_frames_num (int): Total number of captured beacon frames.
+        data_frames_num (int): Total number of captured data frames.
+        cipher (str): The pairwise/group cipher suite.
+        auth_method (str): The authentication method.
+        vendor (str): The resolved vendor string based on the BSSID.
+        distance (float): The estimated distance in meters.
+        observed_ds_states (set[str]): A set of observed Distribution System states.
+        associated_STAs (list[str]): A list of MAC addresses of associated clients.
+        test_results (dict): A dictionary storing results from active and deauth tests.
+    """
+    def __init__(self, 
+            essid: str, 
+            bssid: str,
+            channel: int,
+            encryption_mode: str = "", 
+            signal_strength: int = 0, 
+            beacon_frames_num: int = 0, 
+            data_frames_num: int = 0,  
+            cipher: str = "", 
+            auth_method: str = ""
+            ) -> None:
 
-        # Store the basic identifier and radio parameters of the Access Point.
-        self.bssid = str(bssid)
+        self.essid = essid.strip() if len(essid.strip()) > 0 else "Hidden"
+        self.bssid = bssid.strip()
         self.signal_strength = int(signal_strength)
-        self.beacon_frames_num = int(beacon_frames_num)
 
-        # Store the channel only if a valid channel number was detected.
-        # If signal strength is usable, estimate approximate distance from the AP.
-        if int(channel[1:]) > 0:
-            self.channels = [int(channel[1:])]
-            if signal_strength < -10:
-                self.distance = helper.get_approx_dist(signal_strength, self.channels[0])
-            else:
-                self.distance = 0
+        channel = int(channel)
+        if channel > 0:
+            self.channel = channel
+            self.update_distance()
         else:
-            self.channels = []
+            self.channel = 0
             self.distance = 0
 
-        # Store security-related parameters parsed from scan output.
-        self.encryption_mode = str(encryption_mode[1:])
-        self.encryption_mode = str(encryption_mode[1:]).split(" ",1)[0]
-        self.cipher = str(cipher[1:])
-        self.auth_method = str(auth_method[1:])
+        self.encryption_mode = encryption_mode.strip().split(" ")[0]
+        self.cipher = cipher.strip()
+        self.auth_method = auth_method.strip()
 
-        # Store traffic statistics and vendor information.
+        self.beacon_frames_num = int(beacon_frames_num)
         self.data_frames_num = int(data_frames_num)
         self.vendor = helper.find_vendor(self.bssid)
 
-        # Store associated client stations detected for this Access Point.
+        self.observed_ds_states: set[str] = set()
         self.associated_STAs = []
+        self.test_results = {}
 
-    def add_channel(self, channel: int):
-        # Add a newly observed channel if it is valid and not already stored.
-        if int(channel) not in self.channels and int(channel) > 0:
-            self.channels.append(channel)
+    def set_channel(self, channel: int) -> None:
+        """
+        Updates the operational channel if a valid value is provided.
+
+        Args:
+            channel (int): The new channel number.
+        """
+        if channel > 0:
+            self.channel = channel
 
     def print_realtime(self) -> None:
-        # Print formatted real-time information about the Access Point.
+        """
+        Prints formatted real-time information about the Access Point to the standard output.
+        """
         print(
-            helper.pad_ansi(f"{StrengthColors.bold}{self.essid}{StrengthColors.reset}", 35)
-            + helper.pad_ansi(self.bssid, 20)
-            + helper.pad_ansi(helper.format_array(self.channels), 10)
-            + helper.pad_ansi(helper.format_color_strength(self.signal_strength), 20)
-            + helper.pad_ansi(self.encryption_mode, 15)
-            + helper.pad_ansi(self.cipher, 10)
-            + helper.pad_ansi(self.auth_method, 10)
-            + helper.pad_ansi(str(self.beacon_frames_num), 10)
-            + helper.pad_ansi(str(self.data_frames_num), 20)
-            + helper.pad_ansi(str(self.vendor), 40)
-            + helper.pad_ansi(str(self.distance), 10)
+            helper.pad_ansi(f"{StrengthColors.BOLD}{self.essid}{StrengthColors.RESET}", PRINT_WIDTH["essid"])
+            + helper.pad_ansi(self.bssid, PRINT_WIDTH["bssid"])
+            + helper.pad_ansi(f"{self.channel}", PRINT_WIDTH["channel"])
+            + helper.pad_ansi(helper.format_color_strength(self.signal_strength), PRINT_WIDTH["signal_strength"])
+            + helper.pad_ansi(self.encryption_mode, PRINT_WIDTH["encryption"])
+            + helper.pad_ansi(self.cipher, PRINT_WIDTH["cipher"])
+            + helper.pad_ansi(self.auth_method, PRINT_WIDTH["auth"])
+            + helper.pad_ansi(str(self.beacon_frames_num), PRINT_WIDTH["beacons"])
+            + helper.pad_ansi(str(self.data_frames_num), PRINT_WIDTH["data_frames"])
+            + helper.pad_ansi(str(self.vendor), PRINT_WIDTH["vendor"])
+            + helper.pad_ansi(str(self.distance), PRINT_WIDTH["distance"])
         )
 
-    def set_beacon_frames_sum(self, num):
-        # Update the total number of captured beacon frames.
-        self.beacon_frames_num = int(num)
+    def set_beacon_frames_sum(self, number_of_frames: int) -> None:
+        """
+        Updates the total number of captured beacon frames.
 
-    def set_data_frames_sum(self, num):
-        # Update the total number of captured data frames.
-        self.data_frames_num = int(num)
+        Args:
+            number_of_frames (int): The new total of beacon frames.
+        """
+        self.beacon_frames_num = int(number_of_frames)
+
+    def set_data_frames_sum(self, number_of_frames: int) -> None:
+        """
+        Updates the total number of captured data frames.
+
+        Args:
+            number_of_frames (int): The new total of data frames.
+        """
+        self.data_frames_num = int(number_of_frames)
+
+    def add_associated_sta(self, mac_address: str) -> None:
+        """
+        Adds a client station MAC address to the associated list if not already present.
+
+        Args:
+            mac_address (str): The MAC address of the client station.
+        """
+        if mac_address not in self.associated_STAs:
+            self.associated_STAs.append(mac_address)
+    
+    def update_distance(self) -> None:
+        """
+        Updates the estimated distance based on the current signal strength and channel.
+        """
+        if self.signal_strength < -10 and self.channel:
+                self.distance = helper.calculate_approx_distance(self.signal_strength, self.channel)
+        else:
+            self.distance = 0
 
 
-def find_index_by_bssid(device_list, bssid):
-    # Find the index of an Access Point in a list by its BSSID.
-    for i, device in enumerate(device_list):
+def find_index_by_bssid(device_list: list[AP], bssid: str) -> int | None:
+    """
+    Finds the index of an Access Point in a list by its BSSID.
+
+    Args:
+        device_list (list[AP]): The list of Access Point objects.
+        bssid (str): The BSSID to search for.
+
+    Returns:
+        int | None: The index of the Access Point if found, otherwise None.
+    """
+    bssid = bssid.strip()
+    for index, device in enumerate(device_list):
         if device.bssid == bssid:
-            return i
+            return index
     return None
 
-def find_station_index_by_mac(device_list, mac):
-    # Find the index of a station in a list by its MAC address.
-    for i, device in enumerate(device_list):
+def find_station_index_by_mac(device_list: list['Station'], mac: str) -> int | None:
+    """
+    Finds the index of a client station in a list by its MAC address.
+
+    Args:
+        device_list (list[Station]): The list of Station objects.
+        mac (str): The MAC address to search for.
+
+    Returns:
+        int | None: The index of the Station if found, otherwise None.
+    """
+    mac = mac.strip()
+    for index, device in enumerate(device_list):
         if device.mac == mac:
-            return i
+            return index
     return None
 
-
+        
 class Station:
-    # Represents a detected wireless client station.
+    """
+    Represents a detected wireless client station.
 
-    def __init__(self, mac, connected_bssid, probed_essid, data_frames_num) -> None:
-        # Store the station MAC address and currently associated Access Point.
-        self.mac = str(mac)
-        self.connected_bssid = str(connected_bssid[1:])
+    Attributes:
+        mac (str): The MAC address of the station.
+        connected_bssid (str): The BSSID of the associated Access Point.
+        probed_essids (list[str]): A list of ESSIDs the station has probed for.
+        data_frames_num (int): Total number of captured data frames.
+        observed_ds_states (set[str]): A set of observed Distribution System states.
+        possible_bridge (bool): Indicates if the station is suspected of being a bridge.
+        sent_arps (set[str]): A set of unique IP addresses extracted from sent ARP requests.
+    """
 
-        # Store probed ESSIDs only if a valid value is present.
-        if str(probed_essid) != "nan":
-            self.probed_essids = [str(probed_essid)]
+    def __init__(self, mac: str, connected_bssid: str, probed_essid: str, data_frames_num: int) -> None:
+        self.mac = mac.strip()
+        self.connected_bssid = str(connected_bssid).strip()
+
+        probed_essid = str(probed_essid).strip()
+        if probed_essid != "nan":
+            self.probed_essids = [probed_essid]
         else:
             self.probed_essids = []
 
-        # Store the total number of captured data frames.
         self.data_frames_num = int(data_frames_num)
+        self.observed_ds_states = set()
+        self.possible_bridge = False
+        self.sent_arps = set()
 
-    def set_connected_bssid(self, bssid):
-        # Update the associated BSSID if the station connection changed.
-        if bssid[1:] != self.connected_bssid:
-            self.connected_bssid = str(bssid)
+    def set_connected_bssid(self, bssid: str) -> None:
+        """
+        Updates the associated BSSID if the station connection changes.
 
-    def add_probed_essid(self, probed_essid):
-        # Add a newly detected probed ESSID if it is valid and not already present.
-        probed_essid = str(probed_essid)
+        Args:
+            bssid (str): The new associated BSSID.
+        """
+        bssid = bssid.strip()
+        if bssid != self.connected_bssid:
+            self.connected_bssid = bssid
+
+    def add_probed_essid(self, probed_essid: str) -> None:
+        """
+        Adds a newly detected probed ESSID to the list if valid and not present.
+
+        Args:
+            probed_essid (str): The probed ESSID string.
+        """
+        probed_essid = str(probed_essid).strip()
         if probed_essid != "nan":
             if probed_essid not in self.probed_essids:
                 self.probed_essids.append(probed_essid)
 
-    def set_data_frames_num(self, data_frames_num):
-        # Update the total number of captured data frames.
+    def set_data_frames_num(self, data_frames_num: int) -> None:
+        """
+        Updates the total number of captured data frames.
+
+        Args:
+            data_frames_num (int): The new total of data frames.
+        """
         self.data_frames_num = int(data_frames_num)
 
     def print_realtime(self) -> None:
-        # Print formatted real-time information about the client station.
+        """
+        Prints formatted real-time information about the client station to standard output.
+        """
         if len(self.probed_essids) > 0:
             formatted_essids = self.probed_essids
         else:
             formatted_essids = ["/"]
         print(
             helper.pad_ansi(self.mac, 20)
-            + helper.pad_ansi(self.connected_bssid, 20)
-            + helper.pad_ansi(str(self.data_frames_num), 20)
-            + helper.pad_ansi(str(formatted_essids), 20)
+            + helper.pad_ansi(self.connected_bssid, PRINT_WIDTH["connected_bssid"])
+            + helper.pad_ansi(str(self.data_frames_num), PRINT_WIDTH["sta_data_frames"])
+            + helper.pad_ansi(str(formatted_essids), PRINT_WIDTH["last_probed"])
         )

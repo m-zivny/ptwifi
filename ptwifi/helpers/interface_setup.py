@@ -32,17 +32,25 @@ External Tools
 * systemctl     - Restarts wpa_supplicant when restoring managed mode.
 """
 
-from helpers.helper_functions import *
-from helpers.classes import *
+import subprocess
+from helpers.helper_functions import strip_whitespaces
+from helpers.classes import Style, InterfaceModes, channels_2g, channels_5g
 
-# suppress subprocess output to command line
+# Suppress subprocess output to command line
 stdout = subprocess.DEVNULL
 
 def wireless_interface_exists(interface_name: str) -> bool:
-    # Check whether the specified wireless interface exists in the system.
-    # The function queries interface information using the "iw" utility.
+    """
+    Checks whether the specified wireless interface exists in the system.
+
+    Args:
+        interface_name (str): The name of the interface.
+
+    Returns:
+        bool: True if the interface exists, False otherwise.
+    """
     try:
-        _interface_status = subprocess.check_output(["iw", "dev", interface_name, "info"], text=True, stderr = subprocess.DEVNULL)
+        _interface_status = subprocess.check_output(["iw", "dev", interface_name, "info"], text=True, stderr=subprocess.DEVNULL)
         if _interface_status.__contains__("wiphy"):
             return True
         return False
@@ -50,7 +58,16 @@ def wireless_interface_exists(interface_name: str) -> bool:
         return False
 
 def interface_in_mode(interface_name: str, mode: str) -> bool:
-    # Check whether the interface currently operates in the specified mode (e.g. managed or monitor).
+    """
+    Checks whether the interface currently operates in the specified mode.
+
+    Args:
+        interface_name (str): The name of the interface.
+        mode (str): The target mode (e.g., "managed", "monitor").
+
+    Returns:
+        bool: True if the interface is in the specified mode, False otherwise.
+    """
     _interface_status = subprocess.check_output(["iw", "dev", interface_name, "info"], text=True, stderr=subprocess.DEVNULL)
 
     for line in _interface_status.splitlines():
@@ -59,18 +76,33 @@ def interface_in_mode(interface_name: str, mode: str) -> bool:
     return False
 
 def get_interface_channel(interface_name: str) -> int:
-    # Retrieve the currently configured WiFi channel of the interface.
+    """
+    Retrieves the currently configured Wi-Fi channel of the interface.
+
+    Args:
+        interface_name (str): The name of the interface.
+
+    Returns:
+        int: The active channel number, or 0 if it cannot be determined.
+    """
     _interface_status = subprocess.check_output(["iw", "dev", interface_name, "info"], text=True, stderr=subprocess.DEVNULL)
     for line in _interface_status.splitlines():
-        if f"channel " in line:
+        if "channel " in line:
             line = line.split(" ")
             return int(line[1])
     return 0
 
-def get_phy_index(interface_name: str)-> str:
-    # Retrieve the PHY index associated with the wireless interface.
-    _interface_status = subprocess.check_output(["iw", "dev", interface_name, "info"], text=True,
-                                               stderr=subprocess.DEVNULL)
+def get_phy_index(interface_name: str) -> str:
+    """
+    Retrieves the PHY index associated with the wireless interface.
+
+    Args:
+        interface_name (str): The name of the interface.
+
+    Returns:
+        str: The PHY index as a string, or an empty string if not found.
+    """
+    _interface_status = subprocess.check_output(["iw", "dev", interface_name, "info"], text=True, stderr=subprocess.DEVNULL)
     for line in _interface_status.splitlines():
         if "wiphy" in line:
             phy_index = line.split()[-1]
@@ -78,10 +110,17 @@ def get_phy_index(interface_name: str)-> str:
     return ""
 
 def interface_supports_monitor(interface_name: str) -> bool:
-    # Check whether the interface supports monitor mode.
-    # Monitor mode capability is listed in the PHY information.
+    """
+    Checks whether the interface supports monitor mode by querying PHY capabilities.
+
+    Args:
+        interface_name (str): The name of the interface.
+
+    Returns:
+        bool: True if monitor mode is supported, False otherwise.
+    """
     phy_index = get_phy_index(interface_name)
-    _interface_info = subprocess.check_output(["iw", f"phy{phy_index}", "info"], text=True, stderr = subprocess.DEVNULL)
+    _interface_info = subprocess.check_output(["iw", f"phy{phy_index}", "info"], text=True, stderr=subprocess.DEVNULL)
     _start = None
     _end = None
     for line in _interface_info.splitlines():
@@ -102,35 +141,62 @@ def interface_supports_monitor(interface_name: str) -> bool:
         return False
     return True
 
-def get_wireless_interfaces():
-    # Retrieve wireless interfaces detected by NetworkManager.
+def get_wireless_interfaces() -> list[list[str]]:
+    """
+    Retrieves a list of wireless interfaces detected by NetworkManager.
+
+    Returns:
+        list[list[str]]: A list of parsed interface details.
+    """
     _interface_list = subprocess.check_output(["nmcli", "device"], text=True).splitlines()[1:]
     for _interface in _interface_list:
         _index = _interface_list.index(_interface)
         _interface_list[_index] = strip_whitespaces(_interface)
     return _interface_list
 
-def get_interface_product(interface_name: str) -> list:
-    # Retrieve the hardware product name of the specified interface.
+def get_interface_product(interface_name: str) -> str:
+    """
+    Retrieves the hardware product name of the specified interface via NetworkManager.
+
+    Args:
+        interface_name (str): The name of the interface.
+
+    Returns:
+        str: The joined string representing the hardware product name.
+    """
     _interface_info = strip_whitespaces(subprocess.check_output(["nmcli", "-f", "GENERAL.PRODUCT", "device", "show", interface_name], text=True))
-    return _interface_info[1:len(_interface_info)-1]
-
-
+    return " ".join(_interface_info[1:len(_interface_info)-1])
 
 def set_channel(interface_name: str, channel_num: str) -> bool:
-    # Set the wireless interface to the specified channel.
+    """
+    Sets the wireless interface to the specified operational channel.
+
+    Args:
+        interface_name (str): The name of the interface.
+        channel_num (str): The desired channel number.
+
+    Returns:
+        bool: True if successful, False if the channel is out of valid ranges.
+    """
     channel_num = int(channel_num)
-    if channel_num > 13 or channel_num < 1:
-        print("Channel number out of range.")
-        return False
-    else:
+    if channel_num in channels_2g or channel_num in channels_5g:
         subprocess.check_call(["iw", "dev", interface_name, "set", "channel", str(channel_num)])
         return True
-
+    else:
+        print("Channel number out of range.")
+        return False
+        
 def set_managed(interface_name: str, phy_index: str) -> bool:
-    # Restore the interface to managed mode.
-    # The interface must be deleted and recreated because monitor interfaces
-    # cannot be directly converted back to managed mode.
+    """
+    Restores the interface to managed mode. Deletes the monitor interface and recreates it.
+
+    Args:
+        interface_name (str): The name of the interface (currently in monitor mode).
+        phy_index (str): The PHY index of the interface.
+
+    Returns:
+        bool: True if successfully set to managed mode, False otherwise.
+    """
     subprocess.check_output(["ip", "link", "set", interface_name, "down"])
     subprocess.check_output(["iw", "dev", interface_name, "del"])
     interface_name = interface_name[0:len(interface_name)-3]
@@ -146,9 +212,17 @@ def set_managed(interface_name: str, phy_index: str) -> bool:
         return True
     return False
 
-def set_monitor(interface_name: str, phy_index: str)-> bool:
-    # Switch the interface to monitor mode.
-    # The interface is recreated with the monitor type and a "mon" suffix.
+def set_monitor(interface_name: str, phy_index: str) -> bool:
+    """
+    Switches the interface to monitor mode. Recreates the interface with a 'mon' suffix.
+
+    Args:
+        interface_name (str): The name of the current managed interface.
+        phy_index (str): The PHY index of the interface.
+
+    Returns:
+        bool: True if successfully set to monitor mode, False otherwise.
+    """
     subprocess.check_output(["nmcli", "device", "set", interface_name, "managed", "no"])
     subprocess.check_output(["ip", "link", "set", interface_name, "down"])
     subprocess.check_output(["iw", "dev", interface_name, "del"])

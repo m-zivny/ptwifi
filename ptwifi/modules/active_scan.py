@@ -10,21 +10,10 @@ It utilizes the Scapy library to craft and inject specific 802.11 management
 frames, such as Authentication and Association Requests. By analyzing the 
 responses from Access Points, it identifies device capabilities, verifies 
 security configurations, and collects data for role detection.
-
-Responsibilities
-----------------
-- Craft and send 802.11 Authentication frames
-- Craft and send 802.11 Association Request frames
-- Capture and parse 802.11 response frames (Auth/Assoc Response)
-- Analyze response status codes and capability information elements
-- Support the Decision Engine in identifying Bridge and ClientBridge roles
-
-External Tools
---------------
-* Scapy - Used for frame generation, injection, and sniffing
 """
 
 import time
+from datetime import datetime
 from scapy.volatile import RandMAC
 from scapy.all import (
     RadioTap, 
@@ -35,20 +24,25 @@ from scapy.all import (
     Dot11Elt, 
     srp1,     
     wrpcap,   
-    conf
 )
-from helpers.classes import *
-from helpers.helper_functions import *
-from datetime import datetime
+from helpers.classes import AP, Style
 
-def analyze_capabilities(cap_value) -> dict:
+MAX_RETRIES = 10
+TIMEOUT_TIME = 0.3
+
+def analyze_capabilities(cap_value: int) -> dict[str, bool]:
     """
     Analyzes the 16-bit Capability Information field using bitmasks.
-    Fixes endianness (converts Scapy Big-Endian interpretation back to 802.11 Little-Endian).
+    Fixes endianness to correctly interpret 802.11 Little-Endian format.
+
+    Args:
+        cap_value (int): The raw capability integer extracted from the frame.
+
+    Returns:
+        dict[str, bool]: A dictionary mapping capability names to boolean values.
     """
     try:
         cap_int = int(cap_value)
-        # Byte-swap: swapping the lower and upper bytes
         cap_swapped = ((cap_int & 0xFF) << 8) | ((cap_int >> 8) & 0xFF)
     except (ValueError, TypeError):
         return {}
@@ -63,18 +57,28 @@ def analyze_capabilities(cap_value) -> dict:
         "Radio Measurement": bool(cap_swapped & 0x1000)
     }
 
-def print_capabilities(capabilities: dict) -> None:
+def print_capabilities(capabilities: dict[str, bool]) -> None:
     """
-    Formatted output of captured capabilities to the terminal.
+    Prints a formatted summary of extracted AP capabilities to the terminal.
+
+    Args:
+        capabilities (dict[str, bool]): The dictionary mapping capability names to support status.
     """
     print(f"\n{Style.BOLD}[+] Extracted Capability Information:{Style.RESET}")
     for feature, is_supported in capabilities.items():
         status = "\033[32m[YES]\033[0m" if is_supported else "\033[31m[NO]\033[0m"
         print(f"    {feature:<25} {status}")
 
-def create_auth_frame(target_bssid: str, client_mac: str):
+def create_auth_frame(target_bssid: str, client_mac: str) -> RadioTap:
     """
-    Constructs an 802.11 Authentication frame (Open System).
+    Constructs an 802.11 Authentication frame (Open System) using Scapy.
+
+    Args:
+        target_bssid (str): The MAC address of the target Access Point.
+        client_mac (str): The spoofed or real MAC address of the client sending the request.
+
+    Returns:
+        RadioTap: The fully constructed Scapy packet ready for injection.
     """
     dot11 = Dot11(
         type=0, 
@@ -86,9 +90,17 @@ def create_auth_frame(target_bssid: str, client_mac: str):
     auth = Dot11Auth(algo=0, seqnum=1, status=0)
     return RadioTap() / dot11 / auth
 
-def create_assoc_req_frame(target_bssid: str, client_mac: str, essid: str):
+def create_assoc_req_frame(target_bssid: str, client_mac: str, essid: str) -> RadioTap:
     """
-    Constructs an 802.11 Association Request frame (includes HT, without RSN).
+    Constructs an 802.11 Association Request frame using Scapy.
+
+    Args:
+        target_bssid (str): The MAC address of the target Access Point.
+        client_mac (str): The MAC address of the client sending the request.
+        essid (str): The network name the client is attempting to associate with.
+
+    Returns:
+        RadioTap: The fully constructed Scapy packet ready for injection.
     """
     dot11 = Dot11(
         type=0, 
@@ -108,33 +120,37 @@ def create_assoc_req_frame(target_bssid: str, client_mac: str, essid: str):
 
 def run(interface: str, target_ap: AP) -> None:
     """
-    Central function for active scanning of the target AP with retransmission.
+    Executes the active scanning phase against a specific target Access Point.
+    Injects authentication and association frames, parses responses, and logs results.
+
+    Args:
+        interface (str): The name of the wireless interface in monitor mode.
+        target_ap (AP): The Access Point object representing the test target.
     """
     timestamp = datetime.now().strftime("[%Y-%m-%d_%H-%M]")
     export_path = f"output/active_scan/{timestamp}_{target_ap.bssid.replace(':', '')}.pcap"
 
     print(f"\n{Style.BOLD}--- ACTIVE AP TEST ---{Style.RESET}")
     print(f"Target: {target_ap.essid} ({target_ap.bssid})")
-    print(f"Channel: {target_ap.channels[0] if target_ap.channels else 'Unknown'}")
-     
-    MAX_RETRIES = 5
+    print(f"Channel: {target_ap.channel}")
 
     captured_packets = []
     auth_resp = None
     
     # Phase 1: Authentication
-    client_mac = str(RandMAC())
     for attempt in range(1, MAX_RETRIES + 1):
+        client_mac = str(RandMAC())
         auth_req = create_auth_frame(target_ap.bssid, client_mac)
         captured_packets.append(auth_req)
 
         print(f"\r[*] Testing Authentication (Attempt {attempt}/{MAX_RETRIES})...", end="", flush=True)
 
-        auth_resp = srp1(auth_req, iface=interface, timeout=2, verbose=False)
+        auth_resp = srp1(auth_req, iface=interface, timeout=TIMEOUT_TIME, verbose=False)
 
         if auth_resp and auth_resp.haslayer(Dot11Auth):
             print() 
             break
+        time.sleep(0.5)
 
     if not auth_resp or not auth_resp.haslayer(Dot11Auth):
         print("\n[-] AP did not respond to Authentication Request.")
@@ -162,7 +178,7 @@ def run(interface: str, target_ap: AP) -> None:
 
         print(f"\r[*] Testing Association (Attempt {attempt}/{MAX_RETRIES})...", end="", flush=True)
         
-        assoc_resp = srp1(assoc_req, iface=interface, timeout=2, verbose=False)
+        assoc_resp = srp1(assoc_req, iface=interface, timeout=TIMEOUT_TIME, verbose=False)
         
         if assoc_resp and assoc_resp.haslayer(Dot11AssoResp):
             print() 
@@ -193,5 +209,4 @@ def run(interface: str, target_ap: AP) -> None:
 
     wrpcap(export_path, captured_packets)
     print(f"\n[*] Session saved to: {export_path}")
-    
-    time.sleep(2)
+    time.sleep(5)

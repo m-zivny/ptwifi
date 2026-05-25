@@ -1,0 +1,19 @@
+{
+    "ap_list": [
+        {
+        "essid": "",
+        "bssid": "",
+        "channel": "",
+        "signal_strength": 0,
+        "encryption": "",
+        "cipher": "",
+        "authentication": "",
+        "beacons": 0,
+        "data_frames": 0,
+        "vendor": "",
+        "associated_stas": "",
+        "approx_distance_m": 0,
+        "observed_ds_states": "00"
+    }
+    ]
+}

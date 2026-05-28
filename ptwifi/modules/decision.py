@@ -1,5 +1,6 @@
 """
 modules/decision.py
+Author: Martin Živný
 
 This module performs the final correlation of data from scanning modules 
 (passive, active, deauth) and evaluates the roles of L2/L3 devices, 

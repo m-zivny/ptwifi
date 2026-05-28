@@ -293,7 +293,6 @@ def append_json(filename: str, new_object: dict) -> None:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
 
-# pyrefly: ignore [unknown-name]
 def import_ap_from_json(filename: str) -> list['AP'] | None:
     """
     Loads a list of Access Points from a JSON file and parses them into AP objects.
@@ -331,6 +330,7 @@ def import_ap_from_json(filename: str) -> list['AP'] | None:
         _beacons = int(ap_data.get("beacons"))
         _data_frames = int(ap_data.get("data_frames"))
         _associated_stas = ap_data.get("associated_stas")
+        _observed_ds = ap_data.get("observed_ds_states")
         
         ap_obj = AP(
             essid=_essid,
@@ -348,7 +348,51 @@ def import_ap_from_json(filename: str) -> list['AP'] | None:
             ap_obj.add_associated_sta(sta)
         ap_objects.append(ap_obj)
 
+        for state in _observed_ds.split(","):
+            ap_obj.observed_ds_states.add(state)
+
     return ap_objects
+
+
+def import_sta_from_json(filename: str)->list['Station']:
+    from helpers.classes import Station
+
+    file_path = f"input/{filename}.json"
+    if not os.path.exists(file_path):
+        return None
+
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except json.JSONDecodeError:
+        return None
+
+    sta_objects = []
+    imported_stas = data.get("sta_list", [])
+
+    for sta_data in imported_stas:
+        _mac = sta_data.get("mac")
+        _con_bssid = sta_data.get("connected_bssid")
+        _data_frames = sta_data.get("data_frames_num")
+        _observed_ds = sta_data.get("observed_ds_states")
+        _sent_arps = sta_data.get("arped_IPs")
+        
+        sta_obj = Station(
+            _mac,
+            _con_bssid,
+            "",
+            _data_frames
+        )
+        for observed_state in _observed_ds.split(","):
+            sta_obj.observed_ds_states.add(observed_state)
+
+        for sent_arp in _sent_arps.split(","):
+            sta_obj.sent_arps.add(sent_arp)
+
+        sta_objects.append(sta_obj)
+    
+    return sta_objects    
+
 
 
 def is_multicast(mac: str) -> bool:

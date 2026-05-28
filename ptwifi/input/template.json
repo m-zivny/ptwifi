@@ -3,7 +3,7 @@
         {
         "essid": "",
         "bssid": "",
-        "channel": "",
+        "channel": 0,
         "signal_strength": 0,
         "encryption": "",
         "cipher": "",
@@ -13,7 +13,17 @@
         "vendor": "",
         "associated_stas": "",
         "approx_distance_m": 0,
-        "observed_ds_states": "00"
-    }
+        "observed_ds_states": ""
+        }
+    ],
+    "sta_list":[
+        {
+        "mac": "",
+        "connected_bssid": "",
+        "observed_ds_states": "",
+        "arped_IPs": "",
+        "data_frames_num": ""
+        }
+        
     ]
 }

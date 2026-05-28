@@ -18,7 +18,7 @@ from scapy.all import sniff, Dot11, Dot11Elt, RadioTap, ARP
 
 from helpers.classes import AP, Station, channels_2g, channels_5g
 from helpers.interface_setup import set_channel
-from helpers.helper_functions import format_array, append_json, get_channel_from_frequency, is_multicast, print_ap_header, print_station_header
+from helpers.helper_functions import format_array, append_json, is_multicast, print_ap_header, print_station_header
 
 DWELL_TIME = 0.3
 discovered_aps: dict[str, AP] = {}
@@ -56,35 +56,38 @@ def display_results(stop_event: threading.Event, sta_filter: bool, hidden_filter
         print("\033[H\033[J", end="")
         
         ap_list = list(discovered_aps.values())
-        ap_list.sort(key=lambda ap: str(ap.essid))
+        ap_list.sort(key=lambda ap: int(ap.beacon_frames_num), reverse=True)
+        top_20_aps = ap_list[:20]
+        top_20_aps.sort(key=lambda ap: ap.essid.lower())
+        
 
         print_ap_header()
         
-        for ap in ap_list:
+        for ap in top_20_aps:
             if str(ap.essid) != "Hidden":
                 ap.print_realtime()
 
         if hidden_filter:
             print("\n")
-            for ap in ap_list:
+            for ap in top_20_aps:
                 if str(ap.essid) == "Hidden":
                     ap.print_realtime()
                     
         if sta_filter:
             sta_list = list(discovered_stas.values())
-            sta_list.sort(key=lambda sta: str(sta.mac))
+            sta_list.sort(key=lambda sta: str(sta.data_frames_num))
             if sta_list:
                 print("\n\n")
                 print_station_header()
-                for station in sta_list:
-                    if station.data_frames_num > 1:
+                for station in sta_list[:20]:
                         station.print_realtime()
                     
         time.sleep(0.5)
 
 def get_security_attributes(rsn_payload: bytes) -> tuple[str, str, str]:
     """
-    Parses the Robust Security Network (RSN) Information Element payload.
+    Parses the Robust Security Network (RSN) Information Element payload
+    according to the IEEE 802.11 standard byte offsets.
 
     Args:
         rsn_payload (bytes): The raw bytes of the RSN element payload.
@@ -93,34 +96,52 @@ def get_security_attributes(rsn_payload: bytes) -> tuple[str, str, str]:
         tuple[str, str, str]: A tuple containing the encryption standard, 
                               the pairwise cipher suite, and the authentication method.
     """
-    rsn_hex = rsn_payload.hex()
-
     encryption = "WPA2"
     auth = "Unknown"
     ciphers = []
 
-    # AKM suites
-    if "000fac08" in rsn_hex:
-        encryption = "WPA3"
-        auth = "SAE"
-    elif "000fac12" in rsn_hex:
-        encryption = "WPA3"
-        auth = "OWE"
-    elif "000fac02" in rsn_hex:
-        auth = "PSK"
-    elif "000fac01" in rsn_hex:
-        auth = "802.1X"
+    # Minimální délka pro Verzi (2B) a Group Cipher (4B)
+    if len(rsn_payload) < 6:
+        return encryption, "Unknown", auth
 
-    # Pairwise ciphers
-    if "000fac04" in rsn_hex:
-        ciphers.append("CCMP")
-    if "000fac02" in rsn_hex:
-        ciphers.append("TKIP")
-    if "000fac08" in rsn_hex or "000fac09" in rsn_hex:
-        ciphers.append("GCMP")
+    offset = 2  # Přeskočení Version (2 bytes)
+    offset += 4 # Přeskočení Group Cipher Suite (4 bytes)
+
+    # Pairwise Cipher Suites
+    if len(rsn_payload) >= offset + 2:
+        p_count = int.from_bytes(rsn_payload[offset:offset+2], byteorder='little')
+        offset += 2
+        for _ in range(p_count):
+            if len(rsn_payload) >= offset + 4:
+                suite = rsn_payload[offset:offset+4].hex()
+                if suite == "000fac04":
+                    ciphers.append("CCMP")
+                elif suite == "000fac02":
+                    ciphers.append("TKIP")
+                elif suite in ("000fac08", "000fac09"):
+                    ciphers.append("GCMP")
+                offset += 4
+
+    # AKM (Authentication and Key Management) Suites
+    if len(rsn_payload) >= offset + 2:
+        a_count = int.from_bytes(rsn_payload[offset:offset+2], byteorder='little')
+        offset += 2
+        for _ in range(a_count):
+            if len(rsn_payload) >= offset + 4:
+                suite = rsn_payload[offset:offset+4].hex()
+                if suite == "000fac08":
+                    encryption = "WPA3"
+                    auth = "SAE"
+                elif suite == "000fac12":
+                    encryption = "WPA3"
+                    auth = "OWE"
+                elif suite == "000fac02" and auth != "SAE":
+                    auth = "PSK"
+                elif suite == "000fac01":
+                    auth = "802.1X"
+                offset += 4
 
     cipher = "+".join(sorted(set(ciphers))) if ciphers else "Unknown"
-
     return encryption, cipher, auth
 
 def analyze_beacon(frame: Dot11) -> None:
@@ -139,7 +160,7 @@ def analyze_beacon(frame: Dot11) -> None:
     current_layer = frame.getlayer(Dot11Elt)
     while current_layer:
         try:
-            if current_layer.ID == 3 and len(current_layer.info) > 0:
+           if current_layer.ID in (3, 61) and len(current_layer.info) > 0:
                 channel = int(current_layer.info[0])
                 break
         except Exception:
@@ -348,7 +369,7 @@ def analyze_arp(frame: Dot11) -> None:
     src_mac = arp_layer.hwsrc
     src_ip = arp_layer.psrc
 
-    if src_mac and src_ip:
+    if src_mac and src_ip and src_ip != "0.0.0.0":
         src_mac = src_mac.upper()
         if src_mac in discovered_stas:
             discovered_stas[src_mac].sent_arps.add(src_ip)
@@ -387,8 +408,6 @@ def run(interface: str, channels_to_hop: list[str] = None, sta_filter: bool = Tr
         tuple[list[AP], list[Station]]: Two lists containing the discovered Access Point and Station objects.
     """
     global discovered_aps, discovered_stas
-    discovered_aps.clear()
-    discovered_stas.clear()
 
     channels = channels_to_hop if channels_to_hop else [str(ch) for ch in channels_2g + channels_5g]
  
@@ -441,12 +460,13 @@ def run(interface: str, channels_to_hop: list[str] = None, sta_filter: bool = Tr
             for sta in discovered_stas.values():
                 append_json(export_path,{
                     'mac': sta.mac,
+                    'connected_bssid': sta.connected_bssid,
                     'observed_ds_states': format_array(list(sta.observed_ds_states)),
-                    'arped_IPs': format_array(list(sta.sent_arps))
+                    'arped_IPs': format_array(list(sta.sent_arps)),
+                    'data_frames_num': str(sta.data_frames_num)
                 })
 
         stop_event.set()
         hopper_thread.join(timeout=1.0)
         display_thread.join(timeout=1.0)
-        print("\n\n")
         return list(discovered_aps.values()), list(discovered_stas.values())

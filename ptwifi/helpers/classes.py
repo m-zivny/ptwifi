@@ -46,10 +46,6 @@ PRINT_WIDTH = {
     "last_probed": 20
 }
 
-class InterfaceModes:
-    """Defines possible wireless interface operating modes."""
-    MONITOR = "monitor"
-    MANAGED = "managed"
 
 class PTModes:
     """Defines available PTWiFi tool modes."""
@@ -63,6 +59,8 @@ class Style:
     ITALIC = "\033[3m"
     INVERSE = "\033[7m"
     UNDERLINE = "\033[4m"
+    GREEN = "\033[32m"
+    RED = "\033[31m"
     RESET = "\033[0m"
 
 class StrengthColors:
@@ -134,16 +132,6 @@ class AP:
         self.associated_STAs = []
         self.test_results = {}
 
-    def set_channel(self, channel: int) -> None:
-        """
-        Updates the operational channel if a valid value is provided.
-
-        Args:
-            channel (int): The new channel number.
-        """
-        if channel > 0:
-            self.channel = channel
-
     def print_realtime(self) -> None:
         """
         Prints formatted real-time information about the Access Point to the standard output.
@@ -162,23 +150,6 @@ class AP:
             + helper.pad_ansi(str(self.distance), PRINT_WIDTH["distance"])
         )
 
-    def set_beacon_frames_sum(self, number_of_frames: int) -> None:
-        """
-        Updates the total number of captured beacon frames.
-
-        Args:
-            number_of_frames (int): The new total of beacon frames.
-        """
-        self.beacon_frames_num = int(number_of_frames)
-
-    def set_data_frames_sum(self, number_of_frames: int) -> None:
-        """
-        Updates the total number of captured data frames.
-
-        Args:
-            number_of_frames (int): The new total of data frames.
-        """
-        self.data_frames_num = int(number_of_frames)
 
     def add_associated_sta(self, mac_address: str) -> None:
         """
@@ -198,42 +169,6 @@ class AP:
                 self.distance = helper.calculate_approx_distance(self.signal_strength, self.channel)
         else:
             self.distance = 0
-
-
-def find_index_by_bssid(device_list: list[AP], bssid: str) -> int | None:
-    """
-    Finds the index of an Access Point in a list by its BSSID.
-
-    Args:
-        device_list (list[AP]): The list of Access Point objects.
-        bssid (str): The BSSID to search for.
-
-    Returns:
-        int | None: The index of the Access Point if found, otherwise None.
-    """
-    bssid = bssid.strip()
-    for index, device in enumerate(device_list):
-        if device.bssid == bssid:
-            return index
-    return None
-
-def find_station_index_by_mac(device_list: list['Station'], mac: str) -> int | None:
-    """
-    Finds the index of a client station in a list by its MAC address.
-
-    Args:
-        device_list (list[Station]): The list of Station objects.
-        mac (str): The MAC address to search for.
-
-    Returns:
-        int | None: The index of the Station if found, otherwise None.
-    """
-    mac = mac.strip()
-    for index, device in enumerate(device_list):
-        if device.mac == mac:
-            return index
-    return None
-
         
 class Station:
     """
@@ -263,38 +198,6 @@ class Station:
         self.observed_ds_states = set()
         self.possible_bridge = False
         self.sent_arps = set()
-
-    def set_connected_bssid(self, bssid: str) -> None:
-        """
-        Updates the associated BSSID if the station connection changes.
-
-        Args:
-            bssid (str): The new associated BSSID.
-        """
-        bssid = bssid.strip()
-        if bssid != self.connected_bssid:
-            self.connected_bssid = bssid
-
-    def add_probed_essid(self, probed_essid: str) -> None:
-        """
-        Adds a newly detected probed ESSID to the list if valid and not present.
-
-        Args:
-            probed_essid (str): The probed ESSID string.
-        """
-        probed_essid = str(probed_essid).strip()
-        if probed_essid != "nan":
-            if probed_essid not in self.probed_essids:
-                self.probed_essids.append(probed_essid)
-
-    def set_data_frames_num(self, data_frames_num: int) -> None:
-        """
-        Updates the total number of captured data frames.
-
-        Args:
-            data_frames_num (int): The new total of data frames.
-        """
-        self.data_frames_num = int(data_frames_num)
 
     def print_realtime(self) -> None:
         """

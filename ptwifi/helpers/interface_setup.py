@@ -34,7 +34,7 @@ External Tools
 
 import subprocess
 from helpers.helper_functions import strip_whitespaces
-from helpers.classes import Style, InterfaceModes, channels_2g, channels_5g
+from helpers.classes import Style, channels_2g, channels_5g
 
 # Suppress subprocess output to command line
 stdout = subprocess.DEVNULL
@@ -74,23 +74,6 @@ def interface_in_mode(interface_name: str, mode: str) -> bool:
         if f"type {mode}" in line:
             return True
     return False
-
-def get_interface_channel(interface_name: str) -> int:
-    """
-    Retrieves the currently configured Wi-Fi channel of the interface.
-
-    Args:
-        interface_name (str): The name of the interface.
-
-    Returns:
-        int: The active channel number, or 0 if it cannot be determined.
-    """
-    _interface_status = subprocess.check_output(["iw", "dev", interface_name, "info"], text=True, stderr=subprocess.DEVNULL)
-    for line in _interface_status.splitlines():
-        if "channel " in line:
-            line = line.split(" ")
-            return int(line[1])
-    return 0
 
 def get_phy_index(interface_name: str) -> str:
     """
@@ -205,9 +188,9 @@ def set_managed(interface_name: str, phy_index: str) -> bool:
     subprocess.check_output(["systemctl", "start", f"wpa_supplicant@{interface_name}"])
     subprocess.check_output(["nmcli", "device", "set", interface_name, "managed", "yes"])
 
-    if interface_in_mode(interface_name, InterfaceModes.MANAGED):
+    if interface_in_mode(interface_name, "managed"):
         print(
-            f"Interface {Style.BOLD}{interface_name}{Style.RESET} has been set to {Style.BOLD}{InterfaceModes.MANAGED}{Style.RESET} mode."
+            f"Interface {Style.BOLD}{interface_name}{Style.RESET} has been set to {Style.BOLD}managed{Style.RESET} mode."
         )
         return True
     return False
@@ -230,9 +213,9 @@ def set_monitor(interface_name: str, phy_index: str) -> bool:
     interface_name = f"{interface_name}mon"
     subprocess.check_call(["ip", "link", "set", interface_name, "up"])
 
-    if interface_in_mode(interface_name, InterfaceModes.MONITOR):
+    if interface_in_mode(interface_name, "monitor"):
         print(
-            f"Interface {Style.BOLD}{interface_name}{Style.RESET} has been set to {Style.BOLD}{InterfaceModes.MONITOR}{Style.RESET} mode."
+            f"Interface {Style.BOLD}{interface_name}{Style.RESET} has been set to {Style.BOLD}monitor{Style.RESET} mode."
         )
         return True
     return False

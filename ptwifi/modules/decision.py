@@ -6,7 +6,8 @@ This module performs the final correlation of data from scanning modules
 including the security status of access points.
 """
 
-from helpers.classes import Station, AP
+from helpers.classes import Station, AP, Style
+
 
 def evaluate_station_role(station: Station) -> str:
     """
@@ -27,9 +28,10 @@ def evaluate_station_role(station: Station) -> str:
     
     return "Standard client station"
 
-def evaluate_ap_security(ap: AP) -> list[str]:
+
+def evaluate_ap_security_and_role(ap: AP) -> list[str]:
     """
-    Correlates cryptographic parameters from the passive scan with active test results
+    Correlates parameters from the passive scan with active test results
     to identify security vulnerabilities and misconfigurations.
 
     Args:
@@ -39,42 +41,55 @@ def evaluate_ap_security(ap: AP) -> list[str]:
         list[str]: A list of formatted strings describing identified security findings.
     """
     findings = []
+
+    if "11" in ap.observed_ds_states:
+        findings.append(f"{Style.GREEN}[Info] This access point works as a Bridge in WDS.{Style.RESET}")
     
     # 1. Basic encryption evaluation
     if ap.encryption_mode in ["Open", "WEP"]:
-        findings.append(f"[Critical] Unsecured mode detected: {ap.encryption_mode}.")
+        findings.append(f"{Style.RED}[Vulnerability] Unsecured encryption mode detected: {ap.encryption_mode}! {Style.RESET}")
 
-    # 2. PMF (802.11w) evaluation based on deauth attack
+    # 2. Cipher & Auth evaluation
+    if hasattr(ap, 'cipher') and "TKIP" in ap.cipher:
+        findings.append(f"{Style.RED}[Vulnerability] Obsolete TKIP cipher detected. TKIP contains known cryptographic flaws. Recommend disabling TKIP and using different cipher.{Style.RESET}")
+
+    if hasattr(ap, 'auth_method') and ap.auth_method == "PSK" and ap.encryption_mode == "WPA2":
+        findings.append(f"[Info] WPA2-PSK is used. Ensure the passphrase is long and complex to prevent offline dictionary/brute-force attacks.")
+
+    # 3. PMF evaluation
     pmf_active = False
     pmf_inactive = False
     
     if hasattr(ap, 'test_results'):
         for key, result in ap.test_results.items():
-            if key.startswith("802.11w"):
+            if key.startswith("PMF"):
                 if "Disconnected" in result:
                     pmf_inactive = True
                 elif "Active/Ignored" in result:
                     pmf_active = True
 
         if ap.encryption_mode == "WPA2":
+            findings.append("[Info] WPA2 encryption detected. Consider upgrading to WPA3.")
+            
             if pmf_inactive:
-                findings.append("[Vulnerability] WPA2 does not enforce PMF. The network is susceptible to deauth (DoS) attacks.")
-            elif pmf_active:
-                findings.append("[Info] WPA2 correctly implements and enforces PMF protection.")
+                findings.append(f"{Style.RED}[Vulnerability] WPA2 network does not enforce PMF and is susceptible to deauthentication attacks. Recommend enabling PMF in the AP settings or migrating to WPA3.{Style.RESET}")
                 
-        elif ap.encryption_mode == "WPA3" and pmf_inactive:
-            findings.append("[Anomaly] WPA3 network failed to prevent client disconnection. Severe violation of the IEEE 802.11 standard.")
+        elif ap.encryption_mode == "WPA3":
+            if pmf_inactive:
+                findings.append(f"{Style.RED}[Vulnerability] WPA3 network failed to prevent client disconnection.{Style.RESET}")
 
-        # 3. L2 availability evaluation from active scan
+        # 4. L2 availability evaluation from active scan
         auth_status = ap.test_results.get('auth_status')
         assoc_status = ap.test_results.get('assoc_status')
         
-        if auth_status == 0 and assoc_status == 0 and ap.encryption_mode == "Open":
-            findings.append("[Critical] Open network is fully accessible at the L2 layer. Association successful.")
-        elif (isinstance(auth_status, int) and auth_status != 0) or (isinstance(assoc_status, int) and assoc_status != 0):
-            findings.append(f"[Info] Active L2 protection detected. Rejected by AP (Auth: {auth_status}, Assoc: {assoc_status}).")
+        if auth_status is not None:
+            if auth_status == 0 and assoc_status == 0 and ap.encryption_mode == "Open":
+                findings.append(f"{Style.RED}[Vulnerability] Open network is fully accessible at the L2 layer. Association successful.{Style.RESET}")
+            elif auth_status != 0 or assoc_status != 0:
+                findings.append(f"[Info] Association or Authentication was not successful. Rejected/Ignored by AP (Auth: {auth_status}, Assoc: {assoc_status}).")
 
     return findings
+
 
 def run(aps: list[AP], stas: list[Station]) -> None:
     """
@@ -85,11 +100,12 @@ def run(aps: list[AP], stas: list[Station]) -> None:
         aps (list[AP]): The final list of analyzed Access Points.
         stas (list[Station]): The final list of analyzed Stations.
     """
-    print("\n" + "="*50)
-    print("FINAL NETWORK EVALUATION (DECISION ENGINE)")
-    print("="*50)
+
+    print("\n\n\n")
+    print(f"{Style.BOLD}[*] TEST RESULTS{Style.RESET}")
+
     
-    print("\n--- STATION ROLE ANALYSIS (L2/L3) ---")
+    print(f"\n{Style.BOLD}[*] STATION ROLE ANALYSIS {Style.RESET} \n")
     if not stas:
         print("No stations were provided for analysis.")
     
@@ -97,22 +113,21 @@ def run(aps: list[AP], stas: list[Station]) -> None:
         if sta.data_frames_num > 0:
             role = evaluate_station_role(sta)
             ip_addresses = ", ".join(sta.sent_arps) if hasattr(sta, 'sent_arps') and sta.sent_arps else "Not captured"
-            print(f"MAC: {sta.mac}")
+            print(f"{Style.BOLD}MAC: {sta.mac}{Style.RESET}")
             print(f"  └─ Role: {role}")
             print(f"  └─ IP Addresses (ARP): {ip_addresses}")
 
-    print("\n--- ACCESS POINT SECURITY ANALYSIS ---")
+    print(f"\n{Style.BOLD}[*] ACCESS POINT ANALYSIS{Style.RESET} \n")
     if not aps:
         print("No access points were provided for analysis.")
         
     for ap in aps:
-        print(f"\nBSSID: {ap.bssid} | ESSID: {ap.essid} | Encryption: {ap.encryption_mode}")
+        print(f"{Style.BOLD}BSSID: {ap.bssid} | ESSID: {ap.essid} {Style.RESET}")
         
-        findings = evaluate_ap_security(ap)
+        findings = evaluate_ap_security_and_role(ap)
         if not findings:
-            print("  └─ No obvious vulnerabilities were detected from the performed tests.")
+            print("  └─[Info] No obvious vulnerabilities were detected from the performed tests.")
         else:
             for finding in findings:
                 print(f"  └─ {finding}")
-    
-    print("\n" + "="*50 + "\n")
+        print("\n")
